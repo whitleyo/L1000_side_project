@@ -10,6 +10,7 @@ import pandas as pd
 import numpy as np
 import h5py
 import os
+import gc
 from warnings import warn
 
 class L1000_dataset:
@@ -82,8 +83,8 @@ class L1000_dataset:
         '''
         
         if type(inst_info) == str and type(gene_info) == str:
-            inst_info = pd.read_csv(inst_info, sep = '\t')
-            gene_info = pd.read_csv(gene_info, sep = '\t')
+            inst_info = pd.read_csv(inst_info, sep = '\t', low_memory = False)
+            gene_info = pd.read_csv(gene_info, sep = '\t', low_memory = False)
         elif not (isinstance(inst_info, pd.core.frame.DataFrame) and
                   isinstance(gene_info, pd.core.frame.DataFrame)):
             raise TypeError('inst_info and gene_info must both be filepaths or pandas DataFrames')
@@ -93,9 +94,8 @@ class L1000_dataset:
             read_columns = np.array(pandas_df.columns).astype('str')
             set_diff = np.setdiff1d(target_columns, read_columns)
             if len(set_diff) > 0:
-                raise ValueError(metadata_type + ' lacks appropriate'
-                                 'column names. Missing columns:\n'
-                                 '\n'.join(map(str, set_diff)))
+                raise ValueError(metadata_type + ' lacks appropriate column names\n' +
+                                'Missing columns:\n' + np.array2string(set_diff))
         # helper function to check ids in dataframe against those in
         # gctx file        
         def check_ids(pandas_df, gctx_file_obj, row_or_col):
@@ -126,18 +126,21 @@ class L1000_dataset:
                     raise ValueError('0 common ids. not adding metadata')
                 rows_keep = np.argwhere(np.isin(meta_ids, common_ids)).flatten()
                 pandas_df = pandas_df.iloc[rows_keep, :]
+                
+            else:
+                return pandas_df
             
         # check columns of inst_info
-        inst_info_target_colnames = np.array('inst_id', 'rna_plate', 'rna_well', 
+        inst_info_target_colnames = np.array(['inst_id', 'rna_plate', 'rna_well', 
                                              'pert_id', 'pert_iname', 'pert_type',
                                              'pert_dose', 'pert_dose_unit', 'pert_time',
-                                             't_time_unit' 'cell_id')
+                                              'pert_time_unit', 'cell_id'])
         check_columns(inst_info, inst_info_target_colnames, 'inst_info')
         # check ids for inst_info
         inst_info = check_ids(inst_info, self._gctx_file_obj, 'col')
         # check columns of gene_info
-        gene_info_target_colnames = np.array('pr_gene_id', 'pr_gene_symbol', 'pr_gene_title', 
-                                             'pr_is_lm', 'pr_is_bing')
+        gene_info_target_colnames = np.array(['pr_gene_id', 'pr_gene_symbol', 'pr_gene_title', 
+                                             'pr_is_lm', 'pr_is_bing'])
         check_columns(gene_info, gene_info_target_colnames, 'gene_info')
         # check ids for gene_info
         gene_info = check_ids(gene_info, self._gctx_file_obj, 'row')
@@ -146,7 +149,7 @@ class L1000_dataset:
         self._gene_info = gene_info
         
         
-    def get(self, data_name, analysis_name = None, transpose = True):
+    def get(self, data_name, analysis_name = None, transpose = False):
         
         '''
         Get data in memory, metadata, current genes/instances, or gctx filepath
@@ -163,7 +166,7 @@ class L1000_dataset:
         Returns:
             numpy array or string, or an element of self._analyses with contents depending on data_name
             argument. note that if returning data loaded in memory,
-            data is transposed by default
+            data is not transposed by default
         '''
         
         if data_name == 'gene_info':
@@ -171,7 +174,10 @@ class L1000_dataset:
         elif data_name == 'inst_info':
             return self._inst_info
         elif data_name == 'data':
-            return(self._data.T)
+            data_return = self._data
+            if transpose:
+                data_return = data_return.T
+            return(data_return)
         elif data_name == 'current_inst':
             return(self._current_inst)
         elif data_name == 'current_genes':
@@ -240,7 +246,13 @@ class L1000_dataset:
         # load in data from gctx file
         row_idx = np.argwhere(np.isin(gctx_row_ids, row_ids)).flatten()
         col_idx = np.argwhere(np.isin(gctx_col_ids, col_ids)).flatten()
-        data_mat = self._gctx_file_obj['0/DATA/0/matrix'][row_idx, col_idx]
+        # manual assessment of shape of entry at 0/DATA/0/matrix shows
+        # that for phase 1 data we have 1.3 million rows and ~12,000 columns.
+        # it appears that 'rows' correspond to samples and columns to genes
+        # in the actual data matrix.
+        data_mat_0 = self._gctx_file_obj['0/DATA/0/matrix'][:, row_idx]
+        data_mat = data_mat_0[col_idx, :]
+        gc.collect()
         
         self._data = data_mat
         self._current_inst = col_ids
