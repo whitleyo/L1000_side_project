@@ -12,6 +12,7 @@ import h5py
 import os
 import gc
 from warnings import warn
+import model_classes
 
 class L1000_dataset:
     ''' 
@@ -28,7 +29,6 @@ class L1000_dataset:
         _current_genes (numpy.ndarray with str dtype): current genes corresponding to rows in _data
         _gctx_path (str): filepath to gctx file
         _gtx_file_obj (h5py.File): h5py file object used to access data
-        _analyses (dict): dictionary linking to analyses performed on dataset
         
     TODO:
         Add methods for running/adding analyses
@@ -49,7 +49,6 @@ class L1000_dataset:
         self._gene_info = None
         self._current_inst = np.array([], dtype = 'str')
         self._current_genes = np.array([], dtype = 'str')
-        self._analyses = {}
         # check gctx_path as do not want errors in loading data to occur
         # after initialization of object
         if not type(gctx_path) == str:
@@ -149,7 +148,7 @@ class L1000_dataset:
         self._gene_info = gene_info
         
         
-    def get(self, data_name, analysis_name = None, transpose = False):
+    def get(self, data_name, transpose = False):
         
         '''
         Get data in memory, metadata, current genes/instances, or gctx filepath
@@ -159,8 +158,6 @@ class L1000_dataset:
                 gene_info for gene metadata, inst_info for sample metadata,
                 current_inst for current set of samples, current_genes for 
                 current set of genes, gctx_path for path to gctx_file
-            analysis_name (str or None): analysis to retrieve if retrieving an anlaysis.
-                if None, returns names of all analyses
             transpose (bool): whether to transpose loaded data upon retrieval
             
         Returns:
@@ -184,11 +181,6 @@ class L1000_dataset:
             return(self._current_genes)
         elif data_name == 'gctx_path':
             return(self._gctx_path)
-        elif data_name == 'analysis':
-            if type(analysis_name) == type(None):
-                return self._analyses.keys()
-            else:
-                return self._analyses[analysis_name]
         else:
             raise ValueError('Unrecognized argument for data_name: ', data_name)
             
@@ -259,3 +251,45 @@ class L1000_dataset:
         self._current_genes = row_ids
         
         
+class L1000_analysis:
+    
+    '''
+    Object to run analyses on data from a preexisting L1000_dataset object
+    
+    Attributes:
+        data_set (L1000_dataset): L1000 dataset with gene + sample metadata
+            included
+        model_object (model_object): model to be fit using data_set
+        
+    Overview:
+        model_object will store a model (e.g. weights for linear model or
+        a class from sklearn, keras, etc) which will be partially fit
+        in batches for the specified number of epochs. model_object will
+        return whether or not convergence criteria are met, and if convergence
+        occurs, then fitting will terminate. Essentially, this amounts to
+        streaming data from the hdf5 file in batches similar to would be
+        done with calls to partial_fit in certain sklearn models.
+    '''
+    
+    def __init__(self, data_set, model_object, samples_use):
+        
+        '''
+        Initialize Object
+        Params:
+            data_set (L1000_dataset): L1000 dataset with gene + sample metadata
+                included
+            model_object (model_object): model to be fit using data_set
+            samples_use (array-like of str): samples to be considered for training/testing
+        '''
+        
+        ## TODO: Implement
+        
+    def run(batch_size = 10000, epochs = 10, **kwargs):
+        
+        '''
+        Run Analysis
+        Params:
+            batch_size (int): number of samples per batch
+            epochs (int): number of epochs
+        '''
+        ## TODO: Implement
