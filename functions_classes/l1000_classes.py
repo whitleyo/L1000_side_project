@@ -10,9 +10,10 @@ import pandas as pd
 import numpy as np
 import h5py
 import os
+import copy
 import gc
 from warnings import warn
-import model_classes
+import model_classes as MC
 
 class L1000_dataset:
     ''' 
@@ -77,7 +78,13 @@ class L1000_dataset:
         add either inst_info or gene_info metadata to object
         
         inst_info (str or pandas DataFrame): filepath to *inst_info.txt metadata file or pandas DataFrame with sample info
-        gene_info (str or pandas DataFrame): filepath to *gene_info.txt metadata file or pandas DataFrame 
+        gene_info (str or pandas DataFrame): filepath to *gene_info.txt metadata file or pandas DataFrame
+        
+        Notes:
+            metadata added for genes and samples will be subset of genes and
+            samples in gctx file (i.e. either all genes or a proper subset of genes,
+            all samples or a proper subset of samples). This should prevent errors
+            when subsetting data based off of identifiers in metadata
         
         '''
         
@@ -163,26 +170,46 @@ class L1000_dataset:
         Returns:
             numpy array or string, or an element of self._analyses with contents depending on data_name
             argument. note that if returning data loaded in memory,
-            data is not transposed by default
+            data is not transposed by default. deep copies of object to be returned
+            are made and returned
         '''
         
         if data_name == 'gene_info':
-            return self._gene_info
+            return copy.deepcopy(self._gene_info)
         elif data_name == 'inst_info':
-            return self._inst_info
+            return copy.deepcopy(self._inst_info)
         elif data_name == 'data':
-            data_return = self._data
+            data_return = copy.deepcopy(self._data)
             if transpose:
                 data_return = data_return.T
+                gc.collectI()
+                
             return(data_return)
         elif data_name == 'current_inst':
-            return(self._current_inst)
+            return copy.deepcopy(self._current_inst)
         elif data_name == 'current_genes':
-            return(self._current_genes)
+            return copy.deepcopy(self._current_genes)
         elif data_name == 'gctx_path':
-            return(self._gctx_path)
+            return copy.deepcopy(self._gctx_path)
         else:
             raise ValueError('Unrecognized argument for data_name: ', data_name)
+            
+            
+    def purge_data(self):
+        
+        '''
+        purge data loaded into memory
+        
+        Details:
+            Purges data loaded into memory by resetting _data attribute
+            and calling garbage collection. Also resets current_genes
+            and current_inst.
+        '''
+        
+        self._data = np.zeros(0)
+        self._current_inst = np.array([], dtype = 'str')
+        self._current_genes = np.array([], dtype = 'str')
+        gc.collect()
             
             
     def load_data(self, row_ids, col_ids, verbose = False):
@@ -228,14 +255,17 @@ class L1000_dataset:
         col_ids_meta = self._inst_info['inst_id'].to_numpy().astype('str')
         col_ids_keep = np.argwhere(np.isin(col_ids, col_ids_meta)).flatten()
         num_cols_keep = len(col_ids_keep)
-        col_ids = col_ids[col_ids_keep]
         if verbose: 
             print('keeping ' + str(num_cols_keep) + ' of ' + str(len(col_ids_meta)) +
             'samples')           
         if num_cols_keep < 1:
             raise Exception('0 col_ids in input in gctx file')
-            
-        # load in data from gctx file
+        col_ids = col_ids[col_ids_keep]
+        
+        # purge currently loaded data
+        self.purge_data()
+        
+        # indexes for rows + cols to load
         row_idx = np.argwhere(np.isin(gctx_row_ids, row_ids)).flatten()
         col_idx = np.argwhere(np.isin(gctx_col_ids, col_ids)).flatten()
         # manual assessment of shape of entry at 0/DATA/0/matrix shows
@@ -244,11 +274,106 @@ class L1000_dataset:
         # in the actual data matrix.
         data_mat_0 = self._gctx_file_obj['0/DATA/0/matrix'][:, row_idx]
         data_mat = data_mat_0[col_idx, :]
-        gc.collect()
         
         self._data = data_mat
         self._current_inst = col_ids
         self._current_genes = row_ids
+        
+    def save_data(self, row_ids = None, col_ids = None, output_dir = str, prefix = str):
+        
+        '''
+        For specified row (gene) ids and col (sample) ids, write data + 
+        metadata to files
+        
+        Params:
+            row_ids (numpy.ndarray of str or None): row ids
+            col_ids (numpy.ndarray of str or None): col ids
+            output_dir (str): filepath to output directory, if exists check if non-empty.
+                fail on non-empty directory (manual removal required as gctx files can be large)
+            prefix = file prefix
+            
+        Returns:
+            Does not return anything, writes gctx file and and metadata for
+            specified row and col ids. 
+            
+        Notes:
+            Note that in current configuration,
+            this method only supports saving a subset of a gctx file that can
+            be loaded into memory. Main purpose is making toy dataset that can
+            be used for testing/prototyping purposes. May modify in the future
+            to allow arbitrary addition of data to gctx file in future
+        '''
+        
+        if row_ids is None or col_ids is None:
+            # default to using row + col ids for currently loaded data
+            row_ids = self._current_genes
+            col_ids = self._current_inst
+            
+            if len(row_ids) == 0 or len(col_ids) == 0 or self._data.shape == np.zeros(0).shape:
+                raise ValueError('if row_ids and col_ids not specified ',
+                                 'must have data loaded into memory if not specifying row and col ids')
+            print('using data loaded into memory + associated metadata')
+        else:
+            def check_is_numpy_str(x):
+                # helper function to check if x is a numpy array of strings
+                if isinstance(x, np.ndarray):
+                    if (x.dtype.type is np.str_):
+                        return True
+                return False
+            
+            
+            if not (check_is_numpy_str(row_ids) and check_is_numpy_str(col_ids)):
+                raise TypeError('row_ids and col_ids must be specified as ' + 
+                                'numpy arrays of strings or both must be None')
+            print('using data and metadata for selected samples and genes')
+            self.load_data(row_ids, col_ids, verbose = True)
+            
+        # select metadata
+        row_meta = self.get('gene_info')
+        col_meta = self.get('inst_info')
+        all_row_ids = row_meta['pr_gene_id'].to_numpy().astype('str')
+        all_col_ids = col_meta['inst_id'].to_numpy().astype('str')
+        
+        bad_row_ids = np.setdiff1d(row_ids, all_row_ids)
+        bad_col_ids = np.setdiff1d(col_ids, all_col_ids)
+        if (len(bad_row_ids) > 0) or (len(bad_col_ids) > 0):
+            warn(len(bad_row_ids) + ' row ids and ' +  len(bad_col_ids) + 
+                 ' col ids were not in data')
+        common_row_ids = np.intersect1d(row_ids, all_row_ids)
+        common_col_ids = np.intersect1d(col_ids, all_col_ids)
+        if (len(common_row_ids) == 0):
+            raise Exception('0 specified row_ids were found in metadata')
+        elif (len(common_col_ids) == 0):
+            raise Exception('0 specified col_ids were found in metadata')
+        row_meta = row_meta.iloc[np.argwhere(np.isin(all_row_ids, common_row_ids)), :]
+        col_meta = col_meta.iloc[np.argwhere(np.isin(all_col_ids, common_col_ids)), :]
+        # get data
+        data = self._data
+        
+        # write files
+        if not os.path.exists(output_dir):
+            os.mkdir(output_dir)
+        else:
+            raise Exception('output_dir ' + output_dir + ' exists')
+        # write gctx file. see https://clue.io/connectopedia/gctx_format for details on format specs
+        gctx_file = os.path.join(output_dir, prefix + '.gctx')
+        f = h5py.File(gctx_file,'w-')
+        f.attrs['src'] = self._gctx_path
+        f.attrs['version'] = 'owen_l1000_1.0'
+        f_0 = f.add_group('0')
+        f_0_data = f_0.add_group('DATA')
+        f_0_data_0 = f_0_data.add_group('0')
+        f_0_data_0_matrix = f_0_data_0.create_dataset('matrix', data, dtype = 'float64')
+        f_0_meta = f_0.add_group('META')
+        f_0_meta_row = f_0_meta.add_group('ROW')
+        f_0_meta_row_id = f_0_meta_row.create_dataset('id', common_row_ids, dtype = 'str')
+        f_0_meta_col = f_0_meta.add_group('COL')
+        f_0_meta_col_id = f_0_meta_col.create_dataset('id', common_col_ids, dtype = 'str')
+        # write metadata
+        gene_meta_file = os.path.join(output_dir, prefix + '_gene_info.tsv')
+        col_meta_file = os.path.join(output_dir, prefix + '_inst_info.tsv')
+        row_meta.to_csv(gene_meta_file, sep = '\t')
+        col_meta.to_csv(col_meta_file, sep = '\t')
         
         
 class L1000_analysis:
