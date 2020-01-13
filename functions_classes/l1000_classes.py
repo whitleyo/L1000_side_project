@@ -31,8 +31,6 @@ class L1000_dataset:
         _gctx_path (str): filepath to gctx file
         _gtx_file_obj (h5py.File): h5py file object used to access data
         
-    TODO:
-        Add methods for running/adding analyses
     '''
     
     def __init__(self, gctx_path, inst_info_path = None, gene_info_path = None):
@@ -247,7 +245,7 @@ class L1000_dataset:
         num_rows_keep = len(row_ids_keep)
         if verbose:
             print('keeping ' + str(num_rows_keep) + ' of ' + str(len(row_ids_meta)) +
-            'genes')
+            ' genes')
         if num_rows_keep < 1:
             raise Exception('0 row_ids in input in gctx file')
         row_ids = row_ids[row_ids_keep]
@@ -257,7 +255,7 @@ class L1000_dataset:
         num_cols_keep = len(col_ids_keep)
         if verbose: 
             print('keeping ' + str(num_cols_keep) + ' of ' + str(len(col_ids_meta)) +
-            'samples')           
+            ' samples')           
         if num_cols_keep < 1:
             raise Exception('0 col_ids in input in gctx file')
         col_ids = col_ids[col_ids_keep]
@@ -337,16 +335,16 @@ class L1000_dataset:
         bad_row_ids = np.setdiff1d(row_ids, all_row_ids)
         bad_col_ids = np.setdiff1d(col_ids, all_col_ids)
         if (len(bad_row_ids) > 0) or (len(bad_col_ids) > 0):
-            warn(len(bad_row_ids) + ' row ids and ' +  len(bad_col_ids) + 
+            warn(str(len(bad_row_ids)) + ' row ids and ' +  str(len(bad_col_ids)) + 
                  ' col ids were not in data')
-        common_row_ids = np.intersect1d(row_ids, all_row_ids)
-        common_col_ids = np.intersect1d(col_ids, all_col_ids)
+        common_row_ids = np.intersect1d(row_ids, all_row_ids).flatten()
+        common_col_ids = np.intersect1d(col_ids, all_col_ids).flatten()
         if (len(common_row_ids) == 0):
             raise Exception('0 specified row_ids were found in metadata')
         elif (len(common_col_ids) == 0):
             raise Exception('0 specified col_ids were found in metadata')
-        row_meta = row_meta.iloc[np.argwhere(np.isin(all_row_ids, common_row_ids)), :]
-        col_meta = col_meta.iloc[np.argwhere(np.isin(all_col_ids, common_col_ids)), :]
+        row_meta = row_meta.iloc[np.argwhere(np.isin(all_row_ids, common_row_ids)).flatten(), :]
+        col_meta = col_meta.iloc[np.argwhere(np.isin(all_col_ids, common_col_ids)).flatten(), :]
         # get data
         data = self._data
         
@@ -360,15 +358,16 @@ class L1000_dataset:
         f = h5py.File(gctx_file,'w-')
         f.attrs['src'] = self._gctx_path
         f.attrs['version'] = 'owen_l1000_1.0'
-        f_0 = f.add_group('0')
-        f_0_data = f_0.add_group('DATA')
-        f_0_data_0 = f_0_data.add_group('0')
-        f_0_data_0_matrix = f_0_data_0.create_dataset('matrix', data, dtype = 'float64')
-        f_0_meta = f_0.add_group('META')
-        f_0_meta_row = f_0_meta.add_group('ROW')
-        f_0_meta_row_id = f_0_meta_row.create_dataset('id', common_row_ids, dtype = 'str')
-        f_0_meta_col = f_0_meta.add_group('COL')
-        f_0_meta_col_id = f_0_meta_col.create_dataset('id', common_col_ids, dtype = 'str')
+        f_0 = f.create_group('0')
+        f_0_data = f_0.create_group('DATA')
+        f_0_data_0 = f_0_data.create_group('0')
+        f_0_data_0_matrix = f_0_data_0.create_dataset('matrix', data = data, dtype = 'f8')
+        f_0_meta = f_0.create_group('META')
+        f_0_meta_row = f_0_meta.create_group('ROW')
+        f_0_meta_row_id = f_0_meta_row.create_dataset('id', data = common_row_ids.astype('S'))
+        f_0_meta_col = f_0_meta.create_group('COL')
+        f_0_meta_col_id = f_0_meta_col.create_dataset('id', data = common_col_ids.astype('S'))
+        f.close()
         # write metadata
         gene_meta_file = os.path.join(output_dir, prefix + '_gene_info.tsv')
         col_meta_file = os.path.join(output_dir, prefix + '_inst_info.tsv')
